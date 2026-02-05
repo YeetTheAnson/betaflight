@@ -40,8 +40,11 @@
 #include "compass.h"
 #include "compass_qmc5883.h"
 
-// QMC5883L I2C Address
-#define QMC5883L_MAG_I2C_ADDRESS        0x0D
+// ====================================================================
+// USER FIX: CHANGED ADDRESS TO 0x2C FOR CLONE CHIP
+// ====================================================================
+// QMC5883L I2C Address (Modified from 0x0D to 0x2C)
+#define QMC5883L_MAG_I2C_ADDRESS        0x2C 
 
 // Registers
 #define QMC5883L_REG_RESET              0x0B
@@ -164,7 +167,7 @@ static const qmc_descriptor_t qmc5883l_desc = {
     .reg_data_unlock = QMC5883L_REG_DATA_UNLOCK,
     .status_data_ready_mask = QMC5883L_REG_STATUS_DRDY,
     .status_data_overrun_mask = QMC5883L_REG_STATUS_DOR,
-    .default_odr_hz = 200,
+    .default_odr_hz = 100, // USER FIX: Changed from 200 to 100 to match ODR limits
 };
 
 static const qmc_descriptor_t qmc5883p_desc = {
@@ -193,7 +196,15 @@ static bool qmc5883Init(magDev_t *magDev)
     // For L variant, apply reset sequence and configure CONF1
     if (desc->variant == QMC_VARIANT_L) {
         ack = ack && busWriteRegister(dev, QMC5883L_REG_RESET, 0x01);
-        ack = ack && busWriteRegister(dev, QMC5883L_REG_CONF1, QMC5883L_MODE_CONTINUOUS | QMC5883L_ODR_200HZ | QMC5883L_OSR_512 | QMC5883L_RNG_8G);
+        
+        // ====================================================================
+        // USER FIX: FORCE 100HZ INSTEAD OF 200HZ
+        // ====================================================================
+        // The original code used QMC5883L_ODR_200HZ which creates hex 0x1D
+        // Your clone chip rejects 0x1D.
+        // We use QMC5883L_ODR_100HZ (plus RNG_8G + Continuous) which creates 0x19
+        // 0x19 is the value you confirmed works in Arduino.
+        ack = ack && busWriteRegister(dev, QMC5883L_REG_CONF1, QMC5883L_MODE_CONTINUOUS | QMC5883L_ODR_100HZ | QMC5883L_OSR_512 | QMC5883L_RNG_8G);
     } else {
         // Step 1: Write special XYZ sign configuration value to register 0x29
         ack = ack && busWriteRegister(dev, QMC5883P_REG_XYZ_UNLOCK, QMC5883P_XYZ_SIGN_CONFIG);
@@ -303,7 +314,10 @@ static bool qmc5883lDetect(magDev_t *magDev)
     delay(20);
 
     uint8_t sig = 0;
+    // Note: Most clones still have the generic ID at generic ID register
     bool ack = busReadRegisterBuffer(dev, QMC5883L_REG_ID, &sig, 1);
+    
+    // If you find detection failing, you can comment out the (sig == QMC5883L_ID_VAL) check
     if (ack && sig == QMC5883L_ID_VAL) {
         // Should be in standby mode after soft reset and sensor is really present
         // Reading ChipID of 0xFF alone is not sufficient to be sure the QMC is present
@@ -363,6 +377,9 @@ static void resetI2CAddress(magDev_t *magDev)
 bool qmc5883Detect(magDev_t *magDev)
 {
     resetI2CAddress(magDev);
+    
+    // The L detection will now try address 0x2C because we changed the define.
+    // Since it runs first, it will grab your sensor before the P driver sees it.
     if (qmc5883lDetect(magDev)) {
         return true;
     }
